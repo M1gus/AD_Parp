@@ -1,13 +1,18 @@
-Abeta parp
-================
+# Parp mutations protect from mitochondrial toxicity in an Alzheimer’s disease model
+<br>
+Yizhou Yu, Giorgio Fedele, Ivana Celardo, Samantha H. Y. Loh and L. Miguel Martins
+<br>
+MRC Toxicology Unit, University of Cambridge, Gleeson Building, Tennis Court Road, Cambridge CB2 1QR, UK.
+<br>
+<br>
 Yizhou Yu, MRC Toxicology Unit, University of Cambridge,
 (<yzy21@mrc-tox.cam.ac.uk>)
 December 2020
 
-# General information
+## General information
 
-This pipeline relates to data included in **Figure X** to **Figure X**
-of out manuscript titled **XXXXXXXX**. It also contains additional
+This pipeline relates to data included in **Figures 5 and 6**
+of our manuscript. It also contains additional
 supplementary materials.
 
 This pipeline aims to: <br> 1. Identify that the AD polygenic risk score
