@@ -1,7 +1,7 @@
 Parp mutations protect against mitochondrial toxicity in a Drosophila model of Alzheimer’s disease
 ================
 Yizhou Yu, MRC Toxicology Unit, University of Cambridge,
-(<yzy21@mrc-tox.cam.ac.uk>)
+(<yzy21@mrc-tox.cam.ac.uk>) <br>
 December 2020
 
 # General information
