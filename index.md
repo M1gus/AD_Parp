@@ -6,12 +6,12 @@ MRC Toxicology Unit, University of Cambridge, Gleeson Building, Tennis Court Roa
 <br>
 <br>
 Yizhou Yu, MRC Toxicology Unit, University of Cambridge,
-(<yzy21@mrc-tox.cam.ac.uk>)
+(yzy21@mrc-tox.cam.ac.uk)
 December 2020
 
 ## General information
 
-This pipeline relates to data included in **Figures 5 and 6**
+This pipeline relates to data included in **Figures 2 to 12**
 of our manuscript. It also contains additional
 supplementary materials.
 
@@ -20,7 +20,7 @@ This pipeline aims to: <br> 1. Identify that the AD polygenic risk score
 SNPs have higher risk of AD. 2.
 
 The input files for this analysis pipeline are on the master branch of
-this GitHub page (link: <https://github.com/M1gus/>)
+this GitHub page (link: <https://github.com/M1gus/AD_Parp>)
 
 The UK Biobank data is not available in the repository as they require
 separate application. Please visit ukbiobank.ac.uk for more information.
