@@ -1,0 +1,2266 @@
+---
+title: "Yu et al. 2021"
+author: "Yizhou Yu, MRC Toxicology Unit, University of Cambridge, (yzy21@mrc-tox.cam.ac.uk)"
+date: "December 2020"
+output: rmarkdown::github_document
+---
+
+# General information
+
+This pipeline relates to data included in **Figure 5** and **Figure 6** of out manuscript titled **XXXXXXXX**. It also contains additional supplementary materials.
+
+The input files for this analysis pipeline are on the master branch of this GitHub page
+(link: https://github.com/M1gus/)
+
+The UK Biobank data is not available in the repository as they require separate application. Please visit ukbiobank.ac.uk for more information. A detailed list of the variables used in the UK Biobank analysis is available here:
+
+**Variables from the UK Biobank**
+
+```{r results = "asis", message = FALSE, warning=FALSE}
+library(stargazer)
+stargazer(read.csv("data/metadt_Abeta_parp_nam_UKB.csv"), summary=FALSE, rownames=FALSE, type = "html")
+```
+
+# Data curation
+## Load libraries
+```{r message = FALSE, warning=FALSE}
+library(dplyr)
+library(reshape)
+library(corrplot)
+library(RColorBrewer)
+library(MASS)
+library(Hmisc)
+library(car)
+```
+
+## Curate UKB phenotype data
+
+```{r}
+
+## import ukb data and rename variables
+rawdt = read.csv("data/UKBdt.csv", na.strings=c("","NA"))
+colnames(rawdt)
+
+#aggregate the columns by selecting the last results, for each 
+ukb_pheno_dt_t = melt(rawdt, id='eid')
+# head(ukb_pheno_dt_t)
+
+#order by variable to make sure I am will be replacing the latest value 
+ukb_pheno_dt_t <- ukb_pheno_dt_t[order(ukb_pheno_dt_t$variable),] 
+
+#delete everything after period 
+ukb_pheno_dt_t$variable = gsub("\\..*","",ukb_pheno_dt_t$variable)
+
+#aggregate by last 
+ukb_t_na = na.omit(ukb_pheno_dt_t)
+ukb_t_na = aggregate(ukb_t_na, by=list(ukb_t_na$eid,ukb_t_na$variable), FUN=tail, n = 1)
+
+# Curate
+ukb_t_na = ukb_t_na[c("eid", "variable", "value")]
+ukb_t_na$variable = as.factor(ukb_t_na$variable)
+
+# put it back straight 
+ukb_cur = cast(ukb_t_na, eid~variable)
+
+```
+
+## Decode
+The variables to decode are: 
+```{r}
+ukb_decode = ukb_cur
+colnames(ukb_decode)
+```
+
+```{r}
+ukb_decode = ukb_cur
+lvl.100291 <- c(-3,-1)
+lbl.100291 <- c("Prefer not to answer","Do not know")
+ukb_decode$X1160 <- replace(ukb_decode$X1160, which(ukb_decode$X1160 < 0), NA)
+
+lvl.100341 <- c(-3,-1,1,2,3,4)
+lbl.100341 <- c("Prefer not to answer","Do not know","Not at all easy","Not very easy","Fairly easy","Very easy")
+ukb_decode$X1170 <- ordered(ukb_decode$X1170, levels=lvl.100341, labels=lbl.100341)
+
+lvl.100342 <- c(-3,-1,1,2,3,4)
+lbl.100342 <- c("Prefer not to answer","Do not know","Definitely a \'morning\' person","More a \'morning\' than \'evening\' person","More an \'evening\' than a \'morning\' person","Definitely an \'evening\' person")
+ukb_decode$X1180 <- ordered(ukb_decode$X1180, levels=lvl.100342, labels=lbl.100342)
+
+lvl.100343 <- c(-3,1,2,3)
+lbl.100343 <- c("Prefer not to answer","Never/rarely","Sometimes","Usually")
+ukb_decode$X1190 <- ordered(ukb_decode$X1190, levels=lvl.100343, labels=lbl.100343)
+ukb_decode$X1200 <- ordered(ukb_decode$X1200, levels=lvl.100343, labels=lbl.100343)
+
+lvl.100346 <- c(-3,-1,0,1,2,3)
+lbl.100346 <- c("Prefer not to answer","Do not know","Never/rarely","Sometimes","Often","All of the time")
+ukb_decode$X1220 <- ordered(ukb_decode$X1220, levels=lvl.100346, labels=lbl.100346)
+
+lvl.0009 <- c(0,1)
+lbl.0009 <- c("Female","Male")
+ukb_decode$X31 <- ordered(ukb_decode$X31, levels=lvl.0009, labels=lbl.0009)
+
+lvl.0300 <- c(0,1,2)
+lbl.0300 <- c("Self-reported only","Hospital admission","Death only")
+lvl.0272 <- c(1)
+lbl.0272 <- c("Date is unknown")
+ukb_decode$X42021 <- ordered(ukb_decode$X42021, levels=lvl.0300, labels=lbl.0300)
+ukb_decode$X42020 <- ordered(ukb_decode$X42020, levels=lvl.0272, labels=lbl.0272)
+
+lvl.1001 <- c(-3,-1,1,2,3,4,5,6,1001,1002,1003,2001,2002,2003,2004,3001,3002,3003,3004,4001,4002,4003)
+lbl.1001 <- c("Prefer not to answer","Do not know","White","Mixed","Asian or Asian British","Black or Black British","Chinese","Other ethnic group","British","Irish","Any other white background","White and Black Caribbean","White and Black African","White and Asian","Any other mixed background","Indian","Pakistani","Bangladeshi","Any other Asian background","Caribbean","African","Any other Black background")
+ukb_decode$X21000 <- ordered(ukb_decode$X21000, levels=lvl.1001, labels=lbl.1001)
+
+lvl.100305 <- c(-7,-3,1,2,3,4,5,6)
+lbl.100305 <- c("None of the above","Prefer not to answer","College or University degree","A levels/AS levels or equivalent","O levels/GCSEs or equivalent","CSEs or equivalent","NVQ or HND or HNC or equivalent","Other professional qualifications eg: nursing, teaching")
+ukb_decode$X6138 <- ordered(ukb_decode$X6138, levels=lvl.100305, labels=lbl.100305)
+
+```
+
+## Fix column names
+Replace column names with good variables
+```{r}
+UKBdt_colname_df = data.frame(col = colnames(ukb_decode)[-1])
+
+meta_dt = read.csv("data/metadt_Abeta_parp_nam_UKB.csv")
+meta_dt$FieldID = paste("X", meta_dt$FieldID, sep = "")
+
+#join allows orders to be kept 
+#library(plyr)
+UKBdt_col_df_mer = merge(UKBdt_colname_df, meta_dt, by.x = "col", by.y = "FieldID")
+
+colnames(ukb_decode) <- c("eid", UKBdt_col_df_mer$my_colname)
+```
+
+## Curate variables
+```{r}
+ukb_curate = ukb_decode
+
+ukb_curate = ukb_curate %>%
+  mutate(ad_diag = c("FALSE", "TRUE")[(!is.na(ad_date) | 
+                                     !is.na(ad) 
+                                     )+1] )
+
+# curate age -> first 4 variables of TGA assay date
+ukb_curate$age <- substr(ukb_curate$date_assessed,1,4)
+ukb_curate$age <- as.numeric(ukb_curate$age) - as.numeric(ukb_curate$birth)
+
+#create whr
+ukb_curate$whr = as.numeric(ukb_curate$waist) / as.numeric(ukb_curate$hip)
+
+#normalise blood markers by protein level
+ukb_curate$log_normCRP = log(as.numeric(ukb_curate$crp)/as.numeric(ukb_curate$tot_p))
+ukb_curate$log_normVitaD = log(as.numeric(ukb_curate$vitamind)/as.numeric(ukb_curate$tot_p))
+
+#make the rest into numeric
+ukb_curate$townsend = as.numeric(ukb_curate$townsend) 
+ukb_curate$crp=as.numeric(ukb_curate$crp)
+ukb_curate$vitamind=as.numeric(ukb_curate$vitamind)
+ukb_curate$tot_p=as.numeric(ukb_curate$tot_p)
+ukb_curate$sleep_dur = as.numeric(ukb_curate$sleep_dur)
+ukb_curate$waist=as.numeric(ukb_curate$waist)
+ukb_curate$hip=as.numeric(ukb_curate$hip)
+
+ukb_curate$date_assessed = as.Date(ukb_curate$date_assessed)
+
+ukb_curate$birth = as.numeric(ukb_curate$birth)
+
+ukb_curate$bpdias = as.numeric(ukb_curate$bpdias)
+ukb_curate$bpsys = as.numeric(ukb_curate$bpsys)
+
+write.csv(ukb_curate, "data_out/ukb_dt_curated.csv", row.names = F)
+```
+
+## Descriptive statistics: phenotypes
+```{r}
+library(arsenal)
+#delete first column -> eid
+ukb_descript_stats <- tableby(ad_diag ~ ., data = ukb_curate[,2:ncol(ukb_curate)])
+write2word(ukb_descript_stats, "ukb_descriptStats.doc",
+  keep.md = TRUE,
+  quiet = TRUE, # passed to rmarkdown::render
+  title = "Descriptive statistics of the UK Biobank subcohort analysed") # passed to summary.tableby
+```
+
+## Curate SNP data 
+### Load data
+```{r}
+library(BGData)
+library(BGLR)
+library(data.table) #requires brew update && brew install llvm
+library(qqman)
+
+#Load each chromosome as a BEDMatrix object and link them by columns to a ColumnLinkedMatrix object:
+genoPath = "~/data_repository/UKB_dt_18-4-2020/"
+full_ukb_gen_dt <- as.ColumnLinkedMatrix(lapply(c(1:22), function(chrom) {
+  BEDMatrix(paste0(genoPath, "ukb_cal_chr", chrom,"_v2.bed"))
+}))
+rownames(full_ukb_gen_dt) <- sapply(strsplit(rownames(full_ukb_gen_dt), "_"), `[`, 1) 
+# convert names from FID_II D to eid
+
+#Combine genotypes and phenotypes into a BGData object
+full_pheno_geno_dt <- as.BGData(full_ukb_gen_dt, alternatePhenotypeFile = "data_out/ukb_dt_curated.csv")
+
+allSamples <- rownames(full_pheno_geno_dt@geno)
+#488377 samples
+allVariants <- colnames(full_pheno_geno_dt@geno)
+#784256 variants
+save(full_pheno_geno_dt, file = "data_out/full_pheno_geno_dt.RData")
+```
+
+### Summary statistics
+```{r eval=FALSE}
+# Compute summary statistics for each variant among all white British samples 
+#full_pheno_geno_summary <- summarize(full_pheno_geno_dt@geno, j = allVariants, chunkSize = 2500, nCores = 8)
+#save(full_pheno_geno_summary, file = "data_out/full_pheno_geno_summary.RData")
+
+```
+
+### PARP SNPs
+
+All PARP snps were obtained from https://www.ncbi.nlm.nih.gov/snp, using the search code PARP1[Gene Name] AND "Homo sapiens"[Organism]
+<br>
+A total of 13341 SNPs were obtained for PARP1, where 12701 of them were unique. and Y of them were present in the UK Biobank.
+
+```{r}
+parp_snp_dt = read.csv("data/PARP_snp_result.txt", sep = "\t")
+parp_snp_dt$snp = paste0("rs",parp_snp_dt$snp_id)
+length(parp_snp_dt$snp)
+length(unique(parp_snp_dt$snp))
+```
+
+```{r}
+# Select variants 
+full_pheno_geno_summary = load("data_out/full_pheno_geno_summary.RData")
+
+parp_snp = unique(parp_snp_dt$snp)
+
+# check all variants
+ukbSNP_without_variant = gsub("_.*","",allVariants)
+parp_intersect = intersect(parp_snp,ukbSNP_without_variant)
+
+#get the index values 
+parp_intersect_intersect_i_df = data.frame(row_num = 1:length(allVariants), 
+                                          raw_var = allVariants, 
+                                          SNP_only = ukbSNP_without_variant, 
+                                          selected_var = ukbSNP_without_variant %in% parp_intersect)
+
+parp_intersect_intersect_i_df = subset(parp_intersect_intersect_i_df, selected_var == TRUE)
+
+parp_snp_dt = merge(parp_snp_dt[!duplicated(parp_snp_dt$snp),], parp_intersect_intersect_i_df,
+                              by.x="snp", by.y = "SNP_only")
+
+write.csv(parp_snp_dt,"data_out/parp_variants_found_in_ukbdt.csv", row.names = FALSE)
+
+BGD_parp_variants = full_pheno_geno_dt@geno[,na.omit(parp_snp_dt$raw_var)]
+
+save(BGD_parp_variants, file = "data_out/parp_variants_dt.RData")
+```
+
+### AD SNPs
+```{r}
+AD_snp_file = read.csv("data/metadt_AD_snp.csv")
+
+# check all variants
+AD_intersect = intersect(unique(AD_snp_file$snp),ukbSNP_without_variant)
+
+#get the index values 
+AD_intersect_intersect_i_df = data.frame(row_num = 1:length(allVariants), 
+                                          raw_var = allVariants, 
+                                          SNP_only = ukbSNP_without_variant, 
+                                          selected_var = ukbSNP_without_variant %in% AD_intersect)
+
+AD_intersect_intersect_i_df = subset(AD_intersect_intersect_i_df, selected_var == TRUE)
+
+AD_snp_file = merge(AD_snp_file, AD_intersect_intersect_i_df,
+                              by.x="snp", by.y = "SNP_only")
+
+write.csv(AD_snp_file,"data_out/AD_variants_found_in_ukbdt.csv", row.names = FALSE)
+
+BGD_AD_variants = full_pheno_geno_dt@geno[,na.omit(AD_snp_file$raw_var)]
+
+save(BGD_AD_variants, file = "data_out/AD_variants_dt.RData")
+```
+
+
+*Save all 3 datasets together*
+```{r}
+AD_variants_df = as.data.frame(BGD_AD_variants)
+AD_variants_df$eid = rownames(AD_variants_df)
+
+parp_variants_df = as.data.frame(BGD_parp_variants)
+parp_variants_df$eid = rownames(parp_variants_df)
+
+full_snp_dt = merge(AD_variants_df,parp_variants_df, by = "eid")
+
+ukb_curate = read.csv("data_out/ukb_dt_curated.csv")
+
+ukb_dt = merge(ukb_curate,full_snp_dt, by = "eid", all.x = TRUE)
+
+write.csv(ukb_dt, "data_out/ukb_dt_curated_addedSNP.csv", row.names = F)
+```
+
+## Alzheimer's disease: polygenic risk score validation
+
+### Correlation table 
+```{r}
+#select numeric data 
+numeric_cols <- unlist(lapply(ukb_dt, is.numeric))  
+ukb_dt_numeric = ukb_dt[,numeric_cols]
+ukb_correl<-rcorr(as.matrix(ukb_dt_numeric[,2:ncol(ukb_dt_numeric)]))
+
+#pdf(file = "fig_out/summary_stats_corrplot.pdf")
+corrplot(ukb_correl$r, type="upper", p.mat = ukb_correl$P, sig.level = 0.01, insig = "blank",
+         col=brewer.pal(n=8, name="RdYlBu"))
+#dev.off()
+```
+
+### Validation models
+
+#### Additional data curation: BP, education, ethnicity
+
+```{r}
+ukb_dt = read.csv("data_out/ukb_dt_curated_addedSNP.csv")
+
+ukb_dt$edu = ifelse(ukb_dt$edu_level == "None of the above" | ukb_dt$edu_level == "Prefer not to answer", "No certificate", "Certificate")
+ukb_dt$ethnicity_sim = ifelse(ukb_dt$ethnicity == "British", "British", "Minority")
+
+# recode levels to numeric
+
+ukb_dt$wake_sim = as.numeric(mgsub::mgsub(string = ukb_dt$wake, pattern = c("Prefer not to answer","Do not know","Not at all easy","Not very easy","Fairly easy","Very easy"),
+                               replacement = c(NA,NA,0,1,2,3)))
+
+ukb_dt$morningness_sim = mgsub::mgsub(string = ukb_dt$chronotype, pattern = c("Prefer not to answer","Do not know","Definitely an 'evening' person","More an ‘evening’ than a ‘morning’ person","More a ‘morning’ than ‘evening’ person","Definitely a ‘morning’ person"),
+                               replacement = c(NA,NA,0,1,2,3))
+
+ukb_dt$nap_sim = as.numeric(mgsub::mgsub(string = ukb_dt$nap, pattern = c("Prefer not to answer","Never/rarely","Sometimes","Usually"),
+                               replacement = c(NA,0,1,2)))
+
+ukb_dt$insomnia_sim = as.numeric(mgsub::mgsub(string = ukb_dt$insomnia, pattern = c("Prefer not to answer","Never/rarely","Sometimes","Usually"),
+                               replacement = c(NA,0,1,2)))
+
+
+ukb_dt$daysleep_sim = as.numeric(mgsub::mgsub(string = ukb_dt$daysleep, pattern = c("Prefer not to answer","Do not know","Never/rarely","Sometimes","Often","All of the time"),
+                               replacement = c(NA,NA,0,1,2,3)))
+
+
+ukb_dt$highBP[ukb_dt$bpdias>=90 | ukb_dt$bpsys>=140] <-1
+ukb_dt$highBP[ukb_dt$bpdias<90 | ukb_dt$bpsys<140] <-0
+
+write.csv(ukb_dt, "data_out/ukb_dt_curated_addedSNP_fixedVars.csv", row.names = F)
+
+```
+
+#### Phenotypic model
+
+```{r results = "asis"}
+dt_AD_validation_model_1 = subset(ukb_dt, select = c(ad_diag, sleep_dur, daysleep_sim, nap_sim, insomnia_sim, 
+                             wake_sim, morningness_sim, townsend, ethnicity_sim, whr, sex, age, 
+                             log_normVitaD, log_normCRP, edu, highBP))
+
+AD_validation_model_1= glm(data = na.omit(dt_AD_validation_model_1), ad_diag ~ sleep_dur + daysleep_sim +nap_sim+insomnia_sim+
+                             wake_sim+morningness_sim+townsend+ethnicity_sim+whr + sex + age+
+                             log_normVitaD+log_normCRP+edu+highBP, family = 'binomial')
+summary(AD_validation_model_1)
+vif(AD_validation_model_1)
+
+stargazer::stargazer(AD_validation_model_1,type="html",out = "fig_out/AD_validation_model_noSNPmodel.html",
+          dep.var.labels="AD diagnosis or not",
+          single.row=TRUE)
+```
+
+```{r}
+stepAIC(AD_validation_model_1)
+```
+
+Comparison: 
+<br>
+Before: glm(data = na.omit(dt_AD_validation_model_1), ad_diag ~ sleep_dur + daysleep_sim +nap_sim+insomnia_sim+
+                             wake_sim+morningness_sim+townsend+ethnicity_sim+whr + sex + age+
+                             log_normVitaD+log_normCRP+edu+highBP, family = 'binomial')
+
+
+After: glm(formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu, family = "binomial", 
+    data = na.omit(dt_AD_validation_model_1))
+    
+
+```{r results = "asis"}
+AD_validation_model_simplified = glm(formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu, family = "binomial", 
+    data = dt_AD_validation_model_1)
+summary(AD_validation_model_simplified)
+
+stargazer::stargazer(AD_validation_model_simplified,type="html",out = "fig_out/AD_validation_model_noSNPmodel_simplified.html",
+          dep.var.labels="AD diagnosis or not",
+          single.row=TRUE)
+```
+
+
+#### AD PSG generation
+
+Validation with all the above variables
+
+```{r}
+
+rs10808026_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs10808026_C)
+
+rs10933431_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs10933431_G)
+
+rs11257238_T = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs11257238_T)
+
+rs117618017_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs117618017_C)
+
+rs12539172_T = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs12539172_T)
+
+rs12590654_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs12590654_G)
+
+rs138190086_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs138190086_G)
+
+rs17125924_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs17125924_A)
+
+rs190982_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs190982_G)
+
+rs2632516_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs2632516_G)
+
+rs3752246_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs3752246_G)
+
+rs3851179_T = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs3851179_T)
+
+rs3865444_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs3865444_C)
+
+rs41289512_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs41289512_C)
+
+rs429358_T = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs429358_T)
+
+rs4844610_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs4844610_A)
+
+rs6448453_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs6448453_A)
+
+rs6733839_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs6733839_C)
+
+rs6931277_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs6931277_A)
+
+rs73223431_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs73223431_C)
+
+rs7657553_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs7657553_A)
+
+rs7920721_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs7920721_A)
+
+rs7933202_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs7933202_A)
+
+rs8093731_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs8093731_C)
+
+rs9331896_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs9331896_C)
+
+rs9473117_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + rs9473117_A)
+
+```
+
+Extract OR and p-values of the SNPs from these models 
+```{r}
+AD_SNP_models_list = c("rs10808026_C",
+"rs10933431_G",
+"rs11257238_T",
+"rs117618017_C",
+"rs12539172_T",
+"rs12590654_G",
+"rs138190086_G",
+"rs17125924_A",
+"rs190982_G",
+"rs2632516_G",
+"rs3752246_G",
+"rs3851179_T",
+"rs3865444_C",
+"rs41289512_C",
+"rs429358_T",
+"rs4844610_A",
+"rs6448453_A",
+"rs6733839_C",
+"rs6931277_A",
+"rs73223431_C",
+"rs7657553_A",
+"rs7920721_A",
+"rs7933202_A",
+"rs8093731_C",
+"rs9331896_C",
+"rs9473117_A")
+
+```
+
+For loop
+```{r}
+AD_SNP_df<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(AD_SNP_models_list)){
+
+  model_summary = summary(get(AD_SNP_models_list[model]))
+  
+  snp_name = AD_SNP_models_list[model]
+  OR = exp(tail(model_summary$coefficients[,1],n=1))
+  
+  raw_model = get(AD_SNP_models_list[model])
+  lower = exp(tail(confint(raw_model)[,1],n=1))
+  upper = exp(tail(confint(raw_model)[,2],n=1))
+  
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,OR,upper,lower,p_value)
+  #print(add_row)
+  AD_SNP_df = rbind(AD_SNP_df,add_row)
+}
+
+colnames(AD_SNP_df) <- c("snp_name","OR","upper","lower","p_value")
+
+write.csv(AD_SNP_df, "data_out/SNP_validation_from_simplifiedModels.csv", row.names = F)
+```
+
+```{r}
+rs10808026_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs10808026_C)
+
+rs10933431_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs10933431_G)
+
+rs11257238_T = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs11257238_T)
+
+rs117618017_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs117618017_C)
+
+rs12539172_T = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs12539172_T)
+
+rs12590654_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs12590654_G)
+
+rs138190086_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs138190086_G)
+
+rs17125924_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs17125924_A)
+
+rs190982_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs190982_G)
+
+rs2632516_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs2632516_G)
+
+rs3752246_G = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu +  rs3752246_G)
+
+rs3851179_T = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs3851179_T)
+
+rs3865444_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs3865444_C)
+
+rs41289512_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs41289512_C)
+
+rs429358_T = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu +  rs429358_T)
+
+rs4844610_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs4844610_A)
+
+rs6448453_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs6448453_A)
+
+rs6733839_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age +  edu + rs6733839_C)
+
+rs6931277_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age + edu + rs6931277_A)
+
+rs73223431_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age + edu + rs73223431_C)
+
+rs7657553_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age + edu + rs7657553_A)
+
+rs7920721_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age + edu + rs7920721_A)
+
+rs7933202_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age + edu + rs7933202_A)
+
+rs8093731_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age + edu + rs8093731_C)
+
+rs9331896_C = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age + edu + rs9331896_C)
+
+rs9473117_A = glm(family = "binomial", 
+    data = ukb_dt, formula = ad_diag ~ townsend + age + edu + rs9473117_A)
+
+AD_SNP_models_list = c("rs10808026_C",
+"rs10933431_G",
+"rs11257238_T",
+"rs117618017_C",
+"rs12539172_T",
+"rs12590654_G",
+"rs138190086_G",
+"rs17125924_A",
+"rs190982_G",
+"rs2632516_G",
+"rs3752246_G",
+"rs3851179_T",
+"rs3865444_C",
+"rs41289512_C",
+"rs429358_T",
+"rs4844610_A",
+"rs6448453_A",
+"rs6733839_C",
+"rs6931277_A",
+"rs73223431_C",
+"rs7657553_A",
+"rs7920721_A",
+"rs7933202_A",
+"rs8093731_C",
+"rs9331896_C",
+"rs9473117_A")
+
+AD_SNP_df_sim<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(AD_SNP_models_list)){
+  
+  model_summary = summary(get(AD_SNP_models_list[model]))
+  
+  snp_name = AD_SNP_models_list[model]
+  OR = exp(tail(model_summary$coefficients[,1],n=1))
+  
+  raw_model = get(AD_SNP_models_list[model])
+  lower = exp(tail(confint(raw_model)[,1],n=1))
+  upper = exp(tail(confint(raw_model)[,2],n=1))
+  
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,OR,upper,lower,p_value)
+  #print(add_row)
+  AD_SNP_df_sim = rbind(AD_SNP_df_sim,add_row)
+}
+
+colnames(AD_SNP_df_sim) <- c("snp_name","OR","upper","lower","p_value")
+
+write.csv(AD_SNP_df_sim, "data_out/SNP_validation_from_ageEduModels.csv", row.names = F)
+
+```
+
+Check the snps and how they converge/diverge between the 2 kinds of models 
+```{r}
+subset(AD_SNP_df_sim, p_value< 0.05)$snp_name
+
+subset(AD_SNP_df, p_value< 0.05)$snp_name
+
+AD_SNP_full = rbind(subset(AD_SNP_df_sim, p_value< 0.05),subset(AD_SNP_df, p_value< 0.05))
+
+AD_SNP_full$direction = ifelse(AD_SNP_full$OR > 1,1, -1)
+AD_SNP_full$ln_OR = log(as.numeric(AD_SNP_full$OR))
+AD_SNP_full$multiplier = AD_SNP_full$direction + AD_SNP_full$ln_OR
+```
+
+There is one SNP that is different in both cases. In doubt, I will include both SNPs together in the PSG.
+Some SNPs are protective i.e. OR<1. The OR of the duplicated SNPs were in the same direction, so I can simply delete repeated rows.
+
+```{r}
+psg_snp_dt = subset(AD_SNP_full, select = c(snp_name, multiplier))
+psg_snp_dt = aggregate(multiplier ~ snp_name, data=psg_snp_dt, mean)
+psg_snp_dt
+```
+
+
+```{r}
+
+psg_dt <- subset(ukb_dt, select = c("eid",psg_snp_dt$snp_name))
+
+# check which SNP contribute to an increased vs decreased risk of AD
+psg_dt$rs117618017_C = psg_dt$rs117618017_C *-1.191874
+psg_dt$rs6733839_C = psg_dt$rs6733839_C*-1.159578
+psg_dt$rs8093731_C = psg_dt$rs8093731_C*-1.291260
+psg_dt$rs73223431_C = psg_dt$rs73223431_C*-1.124031
+
+psg_dt$rs3865444_C = psg_dt$rs117618017_C *1.173805
+psg_dt$rs6931277_A = psg_dt$rs6733839_C*1.159326
+psg_dt$rs7933202_A = psg_dt$rs8093731_C*1.114174
+
+psg_dt$ad_psg = rowSums( psg_dt[,2:ncol(psg_dt)] )
+psg_dt = subset(psg_dt, select = c(eid,ad_psg))
+ukb_dt_psg = merge(ukb_dt, psg_dt, by= "eid", all.x = T)
+write.csv(ukb_dt_psg, "data_out/ukb_dt_includingADpsg.csv", row.names = F)
+```
+
+AD PSG validation models
+```{r results = "asis"}
+AD_psg_validation_mod = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ sleep_dur + daysleep_sim + insomnia_sim + 
+    townsend + age + log_normVitaD + log_normCRP + edu + ad_psg)
+
+summary(AD_psg_validation_mod)
+
+stargazer::stargazer(AD_psg_validation_mod,type="html",out = "fig_out/AD_PSG_validation_model_full.html",
+          dep.var.labels="AD diagnosis or not",
+          single.row=TRUE)
+
+```
+
+```{r results = "asis"}
+AD_psg_validation_mod_sim = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + ad_psg)
+
+summary(AD_psg_validation_mod_sim)
+
+stargazer::stargazer(AD_psg_validation_mod_sim,type="html",out = "fig_out/AD_PSG_validation_model_simplified.html",
+          dep.var.labels="AD diagnosis or not",
+          single.row=TRUE)
+```
+## Does mutations in PARP protects against AD?
+
+### PARP and risk of AD
+
+#### Mutations in PARP vs risk of AD
+
+Does mutations in the PARP gene decreases the risk of AD?
+<br>
+The PARP variants are:
+
+```{r}
+parp_snp_variants = unique(read.csv("data_out/parp_variants_found_in_ukbdt.csv")$raw_var)
+parp_snp_variants
+```
+
+```{r results = "asis"}
+rs1136410_A = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs1136410_A)
+
+rs1805410_T = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs1805410_T)
+
+rs3219090_T = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs3219090_T)
+
+rs8679_A = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs8679_A)
+
+rs114939615_G = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs114939615_G)
+
+rs142376976_C = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs142376976_C)
+
+rs1805407_T = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs1805407_T)
+
+rs2230484_G = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs2230484_G)
+
+rs3219062_G = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs3219062_G)
+
+rs3219134_T = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs3219134_T)
+
+rs3219139_A = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs3219139_A)
+
+rs3219145_T = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs3219145_T)
+
+rs78797064_T = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs78797064_T)
+
+rs149632681_C = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs149632681_C)
+
+rs3219123_G = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ townsend + age + edu + rs3219123_G)
+
+PARPsnp_AD_df_sim<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  raw_model = get(parp_snp_variants[model])
+  
+  snp_name = parp_snp_variants[model]
+  OR = exp(tail(model_summary$coefficients[,1],n=1))
+  lower = exp(tail(confint(raw_model)[,1],n=1))
+  upper = exp(tail(confint(raw_model)[,2],n=1))
+  
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,OR,upper,lower,p_value)
+  #print(add_row)
+  PARPsnp_AD_df_sim = rbind(PARPsnp_AD_df_sim,add_row)
+}
+
+colnames(PARPsnp_AD_df_sim) <- c("snp_name","OR","upper","lower","p_value")
+
+write.csv(PARPsnp_AD_df_sim, "data_out/PARPsnp_AD_ageEduModels.csv", row.names = F)
+PARPsnp_AD_df_sim
+```
+
+```{r}
+subset(PARPsnp_AD_df_sim, p_value < 0.05)
+```
+
+Only rs3219134 is significant here. This is an uncharacterised SNP: https://www.ncbi.nlm.nih.gov/snp/rs3219134.
+<br> Following the method described here (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3805565/),
+I will have explore whether Human Splice Finder can shed light whether this intron (rs3219134_T) has any effect on PARP1.
+
+#### Mutations in PARP vs risk of AD in genetically susceptible people
+```{r}
+summary(ukb_dt_psg$ad_psg)
+ukb_dt_psg_upper = subset(ukb_dt_psg, ad_psg>mean(na.omit(ukb_dt_psg$ad_psg)))
+```
+
+```{r}
+rs1136410_A = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs1136410_A)
+
+rs1805410_T = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs1805410_T)
+
+rs3219090_T = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs3219090_T)
+
+rs8679_A = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs8679_A)
+
+rs114939615_G = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs114939615_G)
+
+rs142376976_C = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs142376976_C)
+
+rs1805407_T = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs1805407_T)
+
+rs2230484_G = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs2230484_G)
+
+rs3219062_G = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs3219062_G)
+
+rs3219134_T = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs3219134_T)
+
+rs3219139_A = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs3219139_A)
+
+rs3219145_T = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs3219145_T)
+
+rs78797064_T = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs78797064_T)
+
+rs149632681_C = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs149632681_C)
+
+rs3219123_G = glm(family = "binomial", 
+    data = ukb_dt_psg_upper, formula = ad_diag ~ townsend + age + edu + rs3219123_G)
+
+PARPsnp_AD_df_sim_upper<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  raw_model = get(parp_snp_variants[model])
+  
+  snp_name = parp_snp_variants[model]
+  OR = exp(tail(model_summary$coefficients[,1],n=1))
+  lower = exp(tail(confint(raw_model)[,1],n=1))
+  upper = exp(tail(confint(raw_model)[,2],n=1))
+  
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,OR,upper,lower,p_value)
+  #print(add_row)
+  PARPsnp_AD_df_sim_upper = rbind(PARPsnp_AD_df_sim_upper,add_row)
+}
+
+colnames(PARPsnp_AD_df_sim_upper) <- c("snp_name","OR","upper","lower","p_value")
+
+write.csv(PARPsnp_AD_df_sim_upper, "data_out/PARPsnp_AD_ageEduModels_upperADpsg.csv", row.names = F)
+```
+Significance: 
+```{r}
+subset(PARPsnp_AD_df_sim_upper, p_value < 0.05)
+```
+
+This confirms the finding above, in the total cohort. 
+
+#### Mutations in PARP vs risk of AD in low risk people
+
+```{r}
+ukb_dt_psg_lower = subset(ukb_dt_psg, ad_psg < mean(na.omit(ukb_dt_psg$ad_psg)))
+
+rs1136410_A = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs1136410_A)
+
+rs1805410_T = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs1805410_T)
+
+rs3219090_T = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs3219090_T)
+
+rs8679_A = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs8679_A)
+
+rs114939615_G = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs114939615_G)
+
+rs142376976_C = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs142376976_C)
+
+rs1805407_T = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs1805407_T)
+
+rs2230484_G = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs2230484_G)
+
+rs3219062_G = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs3219062_G)
+
+rs3219134_T = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs3219134_T)
+
+rs3219139_A = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs3219139_A)
+
+rs3219145_T = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs3219145_T)
+
+rs78797064_T = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs78797064_T)
+
+rs149632681_C = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs149632681_C)
+
+rs3219123_G = glm(family = "binomial", 
+    data = ukb_dt_psg_lower, formula = ad_diag ~ townsend + age + edu + rs3219123_G)
+
+ukb_dt_psg_lower<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  
+  snp_name = parp_snp_variants[model]
+  OR = exp(tail(model_summary$coefficients[,1],n=1))
+  lower = exp(tail(confint(get(parp_snp_variants[model]))[,1],n=1))
+  upper = exp(tail(confint(get(parp_snp_variants[model]))[,2],n=1))
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,OR,upper,lower,p_value)
+  #print(add_row)
+  ukb_dt_psg_lower = rbind(ukb_dt_psg_lower,add_row)
+}
+
+colnames(ukb_dt_psg_lower) <- c("snp_name","OR","upper","lower","p_value")
+
+write.csv(ukb_dt_psg_lower, "data_out/PARPsnp_AD_ageEduModels_lowerADpsg.csv", row.names = F)
+ukb_dt_psg_lower
+```
+
+Significance
+
+```{r}
+subset(ukb_dt_psg_lower, p_value < 0.05)
+
+```
+Here, there seem to be a new SNP that emerged: rs78797064. It is another intron, so I can process that SNP at the same time Human Splice Finder. 
+
+
+### PARP and sleep in AD patients
+
+#### Create sleepiness score
+sleep_dur           0.130737   0.032952   3.968 7.26e-05 ***
+daysleep_sim        0.314471   0.065686   4.787 1.69e-06 ***
+insomnia_sim       -0.398816
+
+```{r}
+ukb_dt_psg$sleepiness = ukb_dt_psg$sleep_dur+ukb_dt_psg$daysleep_sim-ukb_dt_psg$insomnia_sim
+```
+
+Validation
+```{r results = "asis"}
+AD_psg_validation_sleepiness = glm(family = "binomial", 
+    data = ukb_dt_psg, formula = ad_diag ~ sleepiness + 
+    townsend + age + log_normVitaD + log_normCRP + edu + ad_psg)
+
+summary(AD_psg_validation_sleepiness)
+
+stargazer::stargazer(AD_psg_validation_sleepiness,type="html",out = "fig_out/AD_PSG_validation_sleepiness_score.html",
+          dep.var.labels="AD diagnosis or not",
+          single.row=TRUE)
+
+```
+#### Model PARP and sleep in AD patients
+```{r}
+ukb_dt_psgAD = subset(ukb_dt_psg, ad_diag == TRUE)
+nrow(ukb_dt_psgAD)
+```
+
+##### Determine the target variables 
+
+```{r results = "asis"}
+library(MASS)
+sleepAD_validation_model_dt = subset(ukb_dt_psg, ad_diag == TRUE,select = c(sleepiness,townsend, ethnicity_sim, whr, sex, age, 
+                             log_normVitaD, log_normCRP, edu, highBP))
+
+sleepAD_validation_model= glm.nb(data = na.omit(sleepAD_validation_model_dt), sleepiness ~ townsend+ethnicity_sim+whr + sex + age+
+                             log_normVitaD+log_normCRP+edu+highBP)
+summary(sleepAD_validation_model)
+
+stargazer::stargazer(sleepAD_validation_model,type="html",out = "fig_out/sleep_inADpatients_validation_model_NB.html",
+          dep.var.labels="Sleepiness score",
+          single.row=TRUE)
+```
+
+Try with logistics instead
+```{r results = "asis"}
+sleepAD_validation_model_dt = subset(ukb_dt_psg, ad_diag == TRUE,select = c(sleepiness,townsend, ethnicity_sim, whr, sex, age, 
+                             log_normVitaD, log_normCRP, edu, highBP))
+
+sleepAD_validation_model= lm(data = na.omit(sleepAD_validation_model_dt), sleepiness ~ townsend+ethnicity_sim+whr + sex + age+
+                             log_normVitaD+log_normCRP+edu+highBP)
+summary(sleepAD_validation_model)
+
+stargazer::stargazer(sleepAD_validation_model,type="html",out = "fig_out/sleep_inADpatients_validation_model_LM.html",
+          dep.var.labels="Sleepiness score",
+          single.row=TRUE)
+```
+Reduce the model with stepAIC
+```{r}
+stepAIC(sleepAD_validation_model)
+```
+
+
+```{r}
+rs1136410_A = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs1136410_A)
+
+rs1805410_T = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs1805410_T)
+
+rs3219090_T = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219090_T)
+
+rs8679_A = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs8679_A)
+
+rs114939615_G = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs114939615_G)
+
+rs142376976_C = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs142376976_C)
+
+rs1805407_T = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs1805407_T)
+
+rs2230484_G = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs2230484_G)
+
+rs3219062_G = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219062_G)
+
+rs3219134_T = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219134_T)
+
+rs3219139_A = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219139_A)
+
+rs3219145_T = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219145_T)
+
+rs78797064_T = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs78797064_T)
+
+rs149632681_C = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs149632681_C)
+
+rs3219123_G = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219123_G)
+
+PARPsnp_sleep_ADpatient<-data.frame(
+  snp_name=character(),Beta=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  
+  snp_name = parp_snp_variants[model]
+  Beta = tail(coef(model_summary),n=1)[1]
+  raw_model = get(parp_snp_variants[model])
+  lower = tail(confint(raw_model)[,1],n=1)
+  upper = tail(confint(raw_model)[,2],n=1)
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,Beta,upper,lower,p_value)
+  #print(add_row)
+  PARPsnp_sleep_ADpatient = rbind(PARPsnp_sleep_ADpatient,add_row)
+}
+
+colnames(PARPsnp_sleep_ADpatient) <- c("snp_name","Beta","upper","lower","p_value")
+
+write.csv(PARPsnp_sleep_ADpatient, "data_out/PARPsnp_andSleep_in_ADpatient.csv", row.names = F)
+PARPsnp_sleep_ADpatient
+```
+
+```{r}
+subset(PARPsnp_sleep_ADpatient, p_value < 0.05)
+```
+
+Interestingly, this is an exon sequence in PARP1: https://www.ncbi.nlm.nih.gov/variation/view/?q=rs2230484. <br> 
+This indicates that having the G (major) allele decreases the risk of sleepiness. The minor allele (A/T) is therefore protective. This may lead to a missense mutation (https://www.ncbi.nlm.nih.gov/clinvar/variation/779066/).
+
+Confirmation that G is the major allele
+```{r}
+summary(factor(ukb_dt_psgAD$rs2230484_G))
+```
+
+I will investigate this further based on this study using SNAP
+
+#### Quick exploration of the effect of sleep on sleep in the whole population
+
+```{r}
+rs1136410_A = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs1136410_A)
+
+rs1805410_T = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs1805410_T)
+
+rs3219090_T = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219090_T)
+
+rs8679_A = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs8679_A)
+
+rs114939615_G = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs114939615_G)
+
+rs142376976_C = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs142376976_C)
+
+rs1805407_T = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs1805407_T)
+
+rs2230484_G = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs2230484_G)
+
+rs3219062_G = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219062_G)
+
+rs3219134_T = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219134_T)
+
+rs3219139_A = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219139_A)
+
+rs3219145_T = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219145_T)
+
+rs78797064_T = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs78797064_T)
+
+rs149632681_C = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs149632681_C)
+
+rs3219123_G = lm(
+    data = ukb_dt_psg, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs3219123_G)
+
+PARPsnp_sleep_wholeUKB<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  
+  snp_name = parp_snp_variants[model]
+  Beta = tail(coef(model_summary),n=1)[1]
+  raw_model = get(parp_snp_variants[model])
+  lower = tail(confint(raw_model)[,1],n=1)
+  upper = tail(confint(raw_model)[,2],n=1)
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,Beta,upper,lower,p_value)
+  #print(add_row)
+  PARPsnp_sleep_wholeUKB = rbind(PARPsnp_sleep_wholeUKB,add_row)
+}
+
+colnames(PARPsnp_sleep_wholeUKB) <- c("snp_name","Beta","upper","lower","p_value")
+
+write.csv(PARPsnp_sleep_wholeUKB, "data_out/PARPsnp_sleep_wholeUKB.csv", row.names = F)
+PARPsnp_sleep_wholeUKB
+```
+rs3219134_T
+```{r}
+subset(PARPsnp_sleep_wholeUKB, p_value < 0.05)
+```
+Interestingly, rs78797064_T is also associated with a higher risk of AD in patients with low genetic risk. The importance of intronic SNPs are explained here: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3500160/. I will therefore explore rs78797064_T further.
+
+
+### Investigate whether there are any PARP1-related genes in the SNPs identified in the EBI GWAS dataset
+There is no intersection...
+```{r}
+AD_ebi_snp_dt = read.csv("data/efotraits_EFO_0000249-associations-2020-12-5.csv")
+parp_snp_dt = read.csv("data/PARP_snp_result.txt", sep = "\t")
+merge(AD_ebi_snp_dt,parp_snp_dt,
+      by.x = "Variant.and.risk.allele",by.y = "snp_id")
+```
+
+
+### Making the figures for the PARP data
+
+#### Descriptive data
+```{r}
+full_dt = read.csv('data_out/ukb_dt_includingADpsg.csv')
+
+length(na.omit(full_dt$ad_psg))
+ADpsg_dt = subset(full_dt, !is.na(ad_psg))
+
+length(ADpsg_dt$ad_diag[ADpsg_dt$ad_diag == TRUE])
+length(ADpsg_dt$ad_diag[ADpsg_dt$ad_diag == FALSE])
+
+ADpsg_dt$sleepiness = ADpsg_dt$sleep_dur+ADpsg_dt$daysleep_sim-ADpsg_dt$insomnia_sim
+ADpsg_dt$date_assessed <- NA
+
+library(arsenal)
+ukb_descript_stats <- tableby(ad_diag ~ ., data =ADpsg_dt[,2:ncol(ADpsg_dt)])
+write2word(ukb_descript_stats, "ukb_descriptStats.doc",
+           keep.md = TRUE,
+           quiet = TRUE, # passed to rmarkdown::render
+           title = "Descriptive statistics of the UK Biobank data") # passed to summary.tableby
+
+```
+
+
+#### Sleepiness model
+```{r}
+ADpsg_dt$sleepiness_std = ADpsg_dt$sleepiness + 1
+
+sleepiness_lm = lm(
+  data = ADpsg_dt, formula = sleepiness ~ sex + age + edu + townsend + whr + ad_diag)
+
+sleepiness_df = data.frame(name=row.names(summary(sleepiness_lm)$coefficients),
+                          cbind((cbind(Beta = coef(sleepiness_lm), confint(sleepiness_lm))), p_value = summary(sleepiness_lm)$coefficients[,4]))
+
+write.csv(sleepiness_df,"data_out/sleepiness_df.csv")
+
+sleepiness_df = subset(sleepiness_df, name != "(Intercept)")
+sleepiness_df = subset(sleepiness_df, p_value <= 0.05)
+
+ggplot(sleepiness_df, 
+       aes(x=reorder(name,Beta), y=Beta, color = p_value)) + 
+  geom_errorbar(aes(ymin=X2.5.., ymax=X97.5..),
+                width=0,                    # Width of the error bars
+                position=position_dodge(.9), color = "grey", size = 1) +
+  geom_point(shape=21, size = 2, color = 'red', fill = "red") +
+  theme_classic() + 
+  geom_hline(yintercept = 0, linetype="dotted") +
+  coord_flip()+ylab("Beta values") + xlab("")
+ggsave('fig_out/sleepinessAD_beta_significant_only.pdf', width = 4, height = 2)
+```
+
+
+
+#### Create an odds ratio graph
+
+```{r}
+PARPsnp_AD_ageEduModels = read.csv('data_out/PARPsnp_AD_ageEduModels.csv')
+PARPsnp_AD_ageEduModels$cat = 'PARPsnp_AD_ageEduModels'
+PARPsnp_AD_ageEduModels = subset(PARPsnp_AD_ageEduModels, p_value <= 0.05)
+
+PARPsnp_AD_ageEduModels_lowerADpsg = read.csv('data_out/PARPsnp_AD_ageEduModels_lowerADpsg.csv')
+PARPsnp_AD_ageEduModels_lowerADpsg$cat = 'PARPsnp_AD_ageEduModels_lowerADpsg'
+PARPsnp_AD_ageEduModels_lowerADpsg = subset(PARPsnp_AD_ageEduModels_lowerADpsg, p_value <= 0.05)
+
+PARPsnp_AD_ageEduModels_upperADpsg = read.csv('data_out/PARPsnp_AD_ageEduModels_upperADpsg.csv')
+PARPsnp_AD_ageEduModels_upperADpsg$cat = 'PARPsnp_AD_ageEduModels_upperADpsg'
+PARPsnp_AD_ageEduModels_upperADpsg = subset(PARPsnp_AD_ageEduModels_upperADpsg, p_value <= 0.05)
+
+PARPsnp_andSleep_in_ADpatient = read.csv('data_out/PARPsnp_andSleep_in_ADpatient.csv')
+PARPsnp_andSleep_in_ADpatient$cat = 'PARPsnp_andSleep_in_ADpatient'
+PARPsnp_andSleep_in_ADpatient = subset(PARPsnp_andSleep_in_ADpatient, p_value <= 0.05)
+
+parp_snp_fig_dt = rbind(PARPsnp_AD_ageEduModels,PARPsnp_AD_ageEduModels_lowerADpsg)
+parp_snp_fig_dt = rbind(parp_snp_fig_dt,PARPsnp_AD_ageEduModels_upperADpsg)
+#parp_snp_fig_dt = rbind(parp_snp_fig_dt,PARPsnp_andSleep_in_ADpatient)
+
+parp_snp_fig_dt$name = with(parp_snp_fig_dt, paste0(cat," ",snp_name))
+
+parp_snp_fig_dt <- parp_snp_fig_dt[order(parp_snp_fig_dt$snp_name),] 
+
+write.csv(parp_snp_fig_dt, "data_out/PARP_SNP_ADodds_significantonly.csv")
+
+library(ggplot2)
+ggplot(parp_snp_fig_dt, 
+       aes(x=reorder(name,-OR), y=OR)) + 
+  geom_errorbar(aes(ymin=lower, ymax=upper),
+                width=0,                    # Width of the error bars
+                position=position_dodge(.9), color = "grey", size = 1) +
+  geom_point(shape=21, size = 2, color = 'red', fill = "red") +
+  theme_classic() + 
+  geom_hline(yintercept = 1, linetype="dotted") +
+  coord_flip()+ylab("Odds ratio") + xlab("")
+ggsave('fig_out/parp_odds_significant_only.pdf', width = 6, height = 2)
+```
+
+#### Create an additional graph just for the sleepiness data
+```{r}
+rs2230484_G = lm(
+    data = ukb_dt_psgAD, formula = (sleepiness) ~ sex + age + edu + townsend + whr + rs2230484_G)
+
+rs2230484_G_sleeppiness_model_df = data.frame(name=row.names(summary(rs2230484_G)$coefficients),
+                          cbind((cbind(Beta = coef(rs2230484_G), confint(rs2230484_G))), p_value = summary(rs2230484_G)$coefficients[,4]))
+
+write.csv(rs2230484_G_sleeppiness_model_df,"data_out/rs2230484_G_sleeppiness_model_df.csv")
+
+rs2230484_G_sleeppiness_model_df = subset(rs2230484_G_sleeppiness_model_df, name != "(Intercept)")
+#rs2230484_G_sleeppiness_model_df = subset(rs2230484_G_sleeppiness_model_df, p_value <= 0.05)
+
+ggplot(rs2230484_G_sleeppiness_model_df, 
+       aes(x=reorder(name,Beta), y=Beta, color = p_value)) + 
+  geom_errorbar(aes(ymin=X2.5.., ymax=X97.5..),
+                width=0,                    # Width of the error bars
+                position=position_dodge(.9), color = "grey", size = 1) +
+  geom_point(shape=21, size = 2, color = 'red', fill = "red") +
+  theme_classic() + 
+  geom_hline(yintercept = 0, linetype="dotted") +scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  coord_flip()+ylab("Beta values") + xlab("")
+ggsave('fig_out/rs2230484_G_sleeppiness_model_significant_only.pdf', width = 4, height = 2)
+```
+
+
+### Generate the PDF for the PARP Human Splicing Variant (HSV) data
+```{r}
+HSV_out = read.csv("additional_PARP_analysis/genomnis_mutations_details_rs3219134_edited.csv")
+library(gridExtra)
+pdf("fig_out/HSV_out.pdf")
+grid.table(HSV_out)
+dev.off()
+```
+
+## Vitamin B medications 
+
+### Curation of the drug data
+```{r}
+med_raw = read.csv("data/medications_20003_dt.csv")
+med_coding = read.csv("data/nam_coding4.tsv", 
+                      sep = "\t")
+med_coding$FA <- NULL
+med_coding$NAD = NA
+med_coding$NAD[med_coding$NAM == 1 | med_coding$vitaminB ==1] <-1
+nam_metadt = subset(med_coding, !is.na(NAD))
+nam_metadt
+nrow(nam_metadt)
+```
+
+start with NAM & niacin
+```{r}
+nam_metadt$name = c("vit_bc","nam","vit_bc1","vit_b","niacin")
+
+med_raw$vit_bc = apply(med_raw, 1, function(x) any(x %in% c("1140867900")))
+med_raw$nam = apply(med_raw, 1, function(x) any(x %in% c("1140870914")))
+med_raw$vit_bc1 = apply(med_raw, 1, function(x) any(x %in% c("1140871004")))
+med_raw$vit_b = apply(med_raw, 1, function(x) any(x %in% c("1140871024")))
+med_raw$niacin = apply(med_raw, 1, function(x) any(x %in% c("1140910670")))
+
+med_out = med_raw[,c("eid",nam_metadt$name)]
+
+write.csv(med_out,"data_out/nam_drug_subset.csv",row.names=FALSE)
+
+#drop vit_bc because it's empty
+med_out$vit_bc <- NULL
+
+drug_dt = merge(full_dt,med_out, by = "eid")
+
+drug_dt$sleepiness = drug_dt$sleep_dur+drug_dt$daysleep_sim-drug_dt$insomnia_sim
+write.csv(drug_dt,"data_out/full_dt_AddNAM.csv",row.names=FALSE)
+```
+
+
+#### Descriptive stats
+this takes a long time
+
+```{r}
+ukb_descript_stats <- tableby(ad_diag ~ ., data =drug_dt[,2:ncol(drug_dt)])
+write2word(ukb_descript_stats, "ukb_descriptStats_NAM.doc",
+           keep.md = TRUE,
+           quiet = TRUE, # passed to rmarkdown::render
+           title = "Descriptive statistics of the UK Biobank data") # passed to summary.tableby
+
+```
+
+```{r}
+drug_dt$NAD = FALSE
+drug_dt$NAD[drug_dt$nam == TRUE |drug_dt$niacin ==TRUE] <-TRUE
+drug_dt$vb = FALSE
+drug_dt$vb[drug_dt$vit_bc1 == TRUE |drug_dt$vit_b ==TRUE | drug_dt$vit_bc ==TRUE ] <-TRUE
+
+drug_dt$nam_vb = FALSE
+drug_dt$nam_vb[drug_dt$NAD == TRUE |drug_dt$vb ==TRUE ] <-TRUE
+
+NAD_model =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + NAD,                   
+    family = "binomial", data = drug_dt)
+
+summary(NAD_model)
+```
+
+```{r}
+nad_participants = subset(drug_dt,NAD==TRUE)
+nad_participants$ad_diag
+```
+
+none of the people who took NAM had AD 
+
+### Vitamin B and AD
+
+#### Vitamin B and AD 
+```{r}
+vb_model =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + vb,                   
+               family = "binomial", data = drug_dt)
+summary(vb_model)
+```
+
+#### Vitamin B and sleepiness
+
+In whole population
+
+```{r}
+sleepiness_lm = lm(
+  data = drug_dt, formula = sleepiness ~ sex + age + edu + townsend + whr + vb)
+summary(sleepiness_lm)
+```
+
+In AD cohort
+```{r}
+AD_dt = subset(drug_dt, ad_diag == TRUE)
+sleepinessAD_vb_lm = lm(
+  data = AD_dt, formula = sleepiness ~ sex + age + edu + townsend + whr + vb)
+summary(sleepinessAD_vb_lm)
+```
+
+### Vitamin B and NAM vs AD and sleepiness
+
+```{r}
+namVB_model =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb,               
+              family = "binomial", data = drug_dt)
+summary(namVB_model)
+```
+
+### Add PSG in data
+
+```{r}
+ADpsg_dt = subset(drug_dt, !is.na(ad_psg))
+ukb_dt_psg_upper = subset(ADpsg_dt, ad_psg>mean(na.omit(ADpsg_dt$ad_psg)))
+ukb_dt_psg_lower = subset(ADpsg_dt, ad_psg<mean(na.omit(ADpsg_dt$ad_psg)))
+```
+
+#### High PSG
+```{r}
+vb_model_upperPSG =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb,                   
+              family = "binomial", data = ukb_dt_psg_upper)
+summary(vb_model_upperPSG)
+```
+
+```{r}
+sleepiness_vb_model_upperPSG =lm(formula = sleepiness ~ sex + age + edu + townsend + whr + nam_vb, data = ukb_dt_psg_upper)
+summary(sleepiness_vb_model_upperPSG)
+```
+
+
+#### Low PSG - not show
+```{r}
+vb_model_lowerPSG =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb,
+                       family = "binomial", data = ukb_dt_psg_lower)
+summary(vb_model_lowerPSG)
+```
+
+```{r}
+sleepiness_nam_model_lowerPSG =lm(formula = sleepiness ~ sex + age + edu + townsend + whr + nam_vb, data = ukb_dt_psg_lower)
+summary(sleepiness_nam_model_lowerPSG)
+```
+
+### Gene-drug interaction: vitamin B and parp mutation, and the risk of AD
+
+#### whole cohort
+```{r}
+namVB_model_rs3219134_T =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb*rs3219134_T,               
+              family = "binomial", data = drug_dt)
+summary(namVB_model_rs3219134_T)
+```
+
+```{r}
+namVB_model_rs78797064_T =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb*rs78797064_T,               
+              family = "binomial", data = drug_dt)
+summary(namVB_model_rs78797064_T)
+```
+
+```{r}
+namVB_model_rs2230484_G =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb*rs2230484_G,               
+              family = "binomial", data = drug_dt)
+summary(namVB_model_rs2230484_G)
+```
+
+#### In high-risk people 
+
+```{r}
+namVB_model_rs3219134_T =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb*rs3219134_T,               
+              family = "binomial", data = ukb_dt_psg_upper)
+summary(namVB_model_rs3219134_T)
+```
+
+```{r}
+namVB_model_rs78797064_T =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb*rs78797064_T,               
+              family = "binomial", data = ukb_dt_psg_upper)
+summary(namVB_model_rs78797064_T)
+```
+
+```{r}
+namVB_model_rs2230484_G =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb*rs2230484_G,               
+              family = "binomial", data = ukb_dt_psg_upper)
+summary(namVB_model_rs2230484_G)
+```
+
+### Plot Vitamin B graphs
+
+#### Vitamin B & AD (General pop)
+```{r}
+namVB_model =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb,               
+              family = "binomial", data = drug_dt)
+
+namVB_model_df = data.frame(name=row.names(summary(namVB_model)$coefficients),cbind(exp(cbind(OR = coef(namVB_model), confint(namVB_model))), p_value = summary(namVB_model)$coefficients[,4]))
+
+write.csv(namVB_model_df,"data_out/namVB_model_df.csv")
+
+namVB_model_df = subset(namVB_model_df, name != "(Intercept)")
+
+ggplot(namVB_model_df, 
+       aes(x=reorder(name,OR), y=OR)) + 
+  geom_errorbar(aes(ymin=X2.5.., ymax=X97.5..),
+                width=0,                    # Width of the error bars
+                position=position_dodge(.9), color = "grey", size = 1) +
+  geom_point(shape=21, size = 2, color = 'red', fill = "red") +
+  theme_classic() + 
+  geom_hline(yintercept = 1, linetype="dotted") +
+  coord_flip()+ylab("Odds ratio") + xlab("") + scale_y_continuous(trans = "reverse")
+ggsave('fig_out/vitaminB_AD_model.pdf', width = 4, height = 2)
+```
+
+
+#### Vitamin B & sleepiness (General pop)
+```{r}
+namVB_sleeppiness_model =lm(formula = sleepiness ~ sex + age + edu + townsend + whr + nam_vb, data = drug_dt)
+#summary(namVB_sleeppiness_model)
+
+namVB_sleeppiness_model_df = data.frame(name=row.names(summary(namVB_sleeppiness_model)$coefficients),cbind((cbind(Beta = coef(namVB_sleeppiness_model), confint(namVB_sleeppiness_model))), p_value = summary(namVB_sleeppiness_model)$coefficients[,4]))
+
+write.csv(namVB_sleeppiness_model_df,"data_out/namVB_sleeppiness_model_df.csv")
+
+namVB_sleeppiness_model_df = subset(namVB_sleeppiness_model_df, name != "(Intercept)")
+
+ggplot(namVB_sleeppiness_model_df, 
+       aes(x=reorder(name,Beta), y=Beta, color = p_value)) + 
+  geom_errorbar(aes(ymin=X2.5.., ymax=X97.5..),
+                width=0,                    # Width of the error bars
+                position=position_dodge(.9), color = "grey", size = 1) +
+  geom_point(shape=21, size = 2, color = 'red', fill = "red") +
+  theme_classic() + 
+  geom_hline(yintercept = 0, linetype="dotted") +
+  coord_flip()+ylab("Beta values") + xlab("") + scale_y_continuous(trans = "reverse")
+ggsave('fig_out/namVB_sleeppiness_model.pdf', width = 4, height = 2)
+```
+
+
+#### Vitamin B & AD (high PSG)
+```{r}
+vb_model_upperPSG =glm(formula = ad_diag ~ sex + age + edu + townsend + whr + nam_vb,                   
+              family = "binomial", data = ukb_dt_psg_upper)
+#summary(vb_model_upperPSG)
+
+vb_model_upperPSG_df = data.frame(name=row.names(summary(vb_model_upperPSG)$coefficients),cbind(exp(cbind(OR = coef(vb_model_upperPSG), confint(vb_model_upperPSG))), p_value = summary(vb_model_upperPSG)$coefficients[,4]))
+
+write.csv(vb_model_upperPSG_df,"data_out/vb_model_upperPSG_df.csv")
+
+vb_model_upperPSG_df = subset(vb_model_upperPSG_df, name != "(Intercept)")
+
+ggplot(vb_model_upperPSG_df, 
+       aes(x=reorder(name,OR), y=OR)) + 
+  geom_errorbar(aes(ymin=X2.5.., ymax=X97.5..),
+                width=0,                    # Width of the error bars
+                position=position_dodge(.9), color = "grey", size = 1) +
+  geom_point(shape=21, size = 2, color = 'red', fill = "red") +
+  theme_classic() + 
+  geom_hline(yintercept = 1, linetype="dotted") +
+  coord_flip()+ylab("Odds ratio") + xlab("")
+ggsave('fig_out/vitaminb_model_upperPSG.pdf', width = 4, height = 2)
+```
+
+
+#### Vitamin B & sleepiness (high PSG)
+```{r}
+sleepiness_vb_model_upperPSG =lm(formula = sleepiness ~ sex + age + edu + townsend + whr + nam_vb, data = ukb_dt_psg_upper)
+#summary(sleepiness_vb_model_upperPSG)
+
+sleepiness_vb_model_upperPSG_df = data.frame(name=row.names(summary(sleepiness_vb_model_upperPSG)$coefficients),cbind((cbind(Beta = coef(sleepiness_vb_model_upperPSG), confint(sleepiness_vb_model_upperPSG))), p_value = summary(sleepiness_vb_model_upperPSG)$coefficients[,4]))
+
+write.csv(sleepiness_vb_model_upperPSG_df,"data_out/sleepiness_vb_model_upperPSG_df.csv")
+
+sleepiness_vb_model_upperPSG_df = subset(sleepiness_vb_model_upperPSG_df, name != "(Intercept)")
+
+ggplot(sleepiness_vb_model_upperPSG_df, 
+       aes(x=reorder(name,Beta), y=Beta, color = p_value)) + 
+  geom_errorbar(aes(ymin=X2.5.., ymax=X97.5..),
+                width=0,                    # Width of the error bars
+                position=position_dodge(.9), color = "grey", size = 1) +
+  geom_point(shape=21, size = 2, color = 'red', fill = "red") +
+  theme_classic() + 
+  geom_hline(yintercept = 0, linetype="dotted") +
+  coord_flip()+ylab("Beta values") + xlab("")
+ggsave('fig_out/sleepiness_vb_model_upperPSG_beta.pdf', width = 4, height = 2)
+```
+
+```{r}
+nrow(drug_dt)
+
+head(drug_dt$nam_vb)
+vb_subset = subset(drug_dt, nam_vb == TRUE)
+nrow(vb_subset)
+AD_subset = subset(drug_dt, ad_diag == TRUE)
+nrow(AD_subset)
+
+```
+
+### Make SNP table 
+
+```{r}
+
+PARPsnp_df = data.frame(parp_snp_variants)
+PARPsnp_df$SNP = gsub("\\_.*","",PARPsnp_df$parp_snp_variants)
+PARPsnp_annotated = rsnps::ncbi_snp_query(PARPsnp_df$SNP)
+write.csv(PARPsnp_annotated, "data_out/parp_snp_variants_df.csv", row.names = FALSE)
+```
+
+```{r}
+PARPsnp_annotated_subset = subset(PARPsnp_annotated, select = c(rsid,bp,ref_seq,minor,maf))
+library(gridExtra)
+pdf("fig_out/parp_snp_variants.pdf")
+grid.table(PARPsnp_annotated_subset)
+dev.off()
+```
+
+### Make supplementary figures: distribution of all variables
+```{r}
+graph_dt = drug_dt
+drops <- c("eid","crp","tot_p","vitamind","date_assessed","ad_date","log_normCRP","log_normVitaD",
+           "wake_sim",        "morningness_sim", "nap_sim",         "insomnia_sim",    "daysleep_sim",
+           "nam",             "vit_bc1",         "vit_b", "ethnicity", "edu_level",  "birth",       "niacin",
+           "NAD",             "vb")
+graph_dt = graph_dt[ , !(names(graph_dt) %in% drops)]
+graph_dt$highBP = as.logical(graph_dt$highBP)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+
+num_graph = graph_dt %>%
+  keep(is.numeric)
+discrete_graph = graph_dt[ , !(names(graph_dt) %in% colnames(num_graph))]
+
+num_vars = c("sleep_dur",     "townsend",      "bpdias",        
+             "bpsys",         "waist",         "hip",           
+             "age",           "whr",        "ad_psg",        "sleepiness")
+num_graph_dt = num_graph[ , (names(num_graph) %in% num_vars)]
+snp_dt = num_graph[ , !(names(num_graph) %in% num_vars)]
+```
+
+```{r}
+discrete_graph %>%
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(stat = "count",fill="#939598",color="#939598") +
+    theme(
+      text = element_text(colour = "#231F20"),
+      strip.background =element_rect(fill="transparent"),
+      axis.text.x = element_text(angle = 90,color = "#231F20"),
+      #axis.text.x = element_text(colour = "#231F20"),
+      axis.text.y = element_text(colour = "#231F20"),
+      panel.background = element_rect(fill = "transparent"), # bg of the panel
+      plot.background = element_rect(fill = "transparent", color = NA), # bg of the plot
+      panel.grid.major = element_blank(), # get rid of major grid
+      panel.grid.minor = element_blank())# get rid of minor grid
+ggsave('fig_out/dt_distribution_discrete.pdf', width = 9, height = 10)
+```
+
+```{r}
+num_graph_dt %>%
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(fill="#939598",color="#939598") + 
+    theme(
+      text = element_text(colour = "#231F20"),
+      axis.text.x = element_text(colour = "#231F20"),
+      axis.text.y = element_text(colour = "#231F20"),
+      strip.background =element_rect(fill="transparent"),
+      panel.background = element_rect(fill = "transparent"), # bg of the panel
+      plot.background = element_rect(fill = "transparent", color = NA), # bg of the plot
+      panel.grid.major = element_blank(), # get rid of major grid
+      panel.grid.minor = element_blank())# get rid of minor grid
+ggsave('fig_out/dt_distribution_continuous.pdf', width = 6.3, height = 7)
+```
+
+For the SNP data, separate that into 2 graphs 
+```{r}
+snp_df = as.data.frame(unclass(snp_dt))
+snp_dt_first = snp_df[,1:20]
+snp_dt_second = snp_df[,21:41]
+```
+
+```{r}
+ snp_dt_first%>%
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(stat = "count",fill="#939598",color="#939598") +
+    scale_x_discrete()+
+    theme(
+      text = element_text(colour = "#231F20"),
+      strip.background =element_rect(fill="transparent"),
+      axis.text.x = element_text(colour = "#231F20"),
+      axis.text.y = element_text(colour = "#231F20"),
+      panel.background = element_rect(fill = "transparent"), # bg of the panel
+      plot.background = element_rect(fill = "transparent", color = NA), # bg of the plot
+      panel.grid.major = element_blank(), # get rid of major grid
+      panel.grid.minor = element_blank())# get rid of minor grid
+ggsave('fig_out/dt_distribution_SNP_1.pdf', width = 6.3, height = 7)
+```
+```{r}
+ snp_dt_second%>%
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(stat = "count",fill="#939598",color="#939598") +
+    scale_x_discrete()+
+    theme(
+      text = element_text(colour = "#231F20"),
+      strip.background =element_rect(fill="transparent"),
+      axis.text.x = element_text(colour = "#231F20"),
+      axis.text.y = element_text(colour = "#231F20"),
+      panel.background = element_rect(fill = "transparent"), # bg of the panel
+      plot.background = element_rect(fill = "transparent", color = NA), # bg of the plot
+      panel.grid.major = element_blank(), # get rid of major grid
+      panel.grid.minor = element_blank())# get rid of minor grid
+ggsave('fig_out/dt_distribution_SNP_2.pdf', width = 6.3, height = 7)
+```
+
+## Analyse imageing-derived phenotypes (IDP)
+Analyse the relationship between AD vs grey and white matter. <br>
+Do mutations in PARP1 or vitamin intake affect neurodegeneration? 
+
+### Curate datasets
+
+#### Curate IDP dataset
+```{r}
+meta_dt_idp = read.csv("data/metadt_idp.csv")
+idp_colnames = c("eid", meta_dt_idp$my_colname)
+idp_colnames
+idp_dt = read.csv("data/idp_raw.csv")
+head(idp_dt)
+colnames(idp_dt)<-idp_colnames
+# just use the first instance for consistency
+idp_subset = subset(idp_dt, select = c(eid,peri_greyM1,greyM1,brainV1,
+                                       left_hippVol,right_hippVol,
+                                       left_hippGrey,right_hippGrey))
+
+colnames(idp_subset)<-c("eid","peri_greyM","greyM","brainV",
+                                       "left_hippVol","right_hippVol",
+                                       "left_hippGrey","right_hippGrey")
+idp_subset$hippG_l = idp_subset$left_hippGrey / idp_subset$left_hippVol
+idp_subset$hippG_r = idp_subset$right_hippGrey / idp_subset$right_hippVol
+idp_subset$hippG_t = idp_subset$hippG_l + idp_subset$hippG_r
+```
+
+#### Merge IDP dataset
+
+```{r}
+dt_addIDP = merge(drug_dt,idp_subset, by = "eid", all.x = TRUE)
+
+write.csv(dt_addIDP, "data_out/ukb_dt_mergedIDP.csv",row.names = FALSE)
+```
+
+### IDP analyses
+
+#### IDP visualisations
+
+Is AD associated with decreases in brain volumes?
+<br>
+Check for normality first: all of them look normal
+```{r}
+plot(density(na.omit(dt_addIDP$peri_greyM)))
+plot(density(na.omit(dt_addIDP$greyM)))
+plot(density(na.omit(dt_addIDP$brainV)))
+plot(density(na.omit(log(dt_addIDP$hippG_t))))
+dt_addIDP$loghippG_t = log(dt_addIDP$hippG_t)
+```
+
+```{r}
+cor(dt_addIDP$peri_greyM, dt_addIDP$greyM,  method = "pearson", use = "complete.obs")
+```
+```{r}
+cor(dt_addIDP$brainV, dt_addIDP$greyM,  method = "pearson", use = "complete.obs")
+```
+
+#### IDP & AD risk
+```{r}
+peri_grey_lm = lm(formula = peri_greyM ~ sex + age + edu + townsend + whr + ad_diag, data = dt_addIDP)
+summary(peri_grey_lm)
+#t.test(dt_addIDP$peri_greyM~dt_addIDP$ad_diag)
+```
+
+```{r}
+grey_lm = lm(formula = greyM ~ sex + age + edu + townsend + whr + ad_diag, data = dt_addIDP)
+summary(grey_lm)
+```
+
+```{r}
+brain_lm = lm(formula = brainV ~ sex + age + edu + townsend + whr + ad_diag, data = dt_addIDP)
+summary(brain_lm)
+```
+
+Check how many people with AD have brain imaging data<br>
+There is only 1 person with AD who when through brain imaging
+```{r}
+AD_dt = subset(dt_addIDP, ad_diag == TRUE)
+
+length(na.omit(AD_dt$brainV))
+```
+
+I will try the analysis with the polygenic risk score
+<br>
+Check the numbers
+```{r}
+nrow(na.omit(subset(dt_addIDP, select = c(ad_psg,peri_greyM))))
+```
+
+```{r}
+peri_grey_prslm = lm(formula = peri_greyM ~ sex + age + edu + townsend + whr + ad_psg, data = dt_addIDP)
+summary(peri_grey_prslm)
+```
+
+```{r}
+grey_prslm = lm(formula = greyM ~ sex + age + edu + townsend + whr + ad_psg, data = dt_addIDP)
+summary(grey_prslm)
+```
+
+```{r}
+brain_prslm = lm(formula = brainV ~ sex + age + edu + townsend + whr + ad_psg, data = dt_addIDP)
+summary(brain_prslm)
+```
+
+```{r}
+hipp_prslm = lm(formula = loghippG_t ~ sex + age + edu + townsend + whr + ad_psg, data = dt_addIDP)
+summary(hipp_prslm)
+```
+
+#### IDP & sleepiness
+
+```{r}
+peri_grey_sleep = lm(formula = peri_greyM ~ sex + age + edu + townsend + whr + sleepiness, data = dt_addIDP)
+summary(peri_grey_sleep)
+```
+
+```{r}
+grey_sleep = lm(formula = greyM ~ sex + age + edu + townsend + whr + sleepiness, data = dt_addIDP)
+summary(grey_sleep)
+```
+
+```{r}
+brain_sleep = lm(formula = brainV ~ sex + age + edu + townsend + whr + sleepiness, data = dt_addIDP)
+summary(brain_sleep)
+```
+
+```{r}
+hipp_sleep = lm(formula = log(hippG_t) ~ sex + age + edu + townsend + whr + sleepiness, data = dt_addIDP)
+summary(hipp_sleep)
+```
+
+
+### PARP analysis
+
+Do the analyses in older participants 
+
+```{r}
+dt_aged = subset(dt_addIDP, age > 65)
+```
+
+#### greyM & PARP1 SNPs
+
+```{r}
+rs1136410_A = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs1136410_A)
+
+rs1805410_T = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs1805410_T)
+
+rs3219090_T = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs3219090_T)
+
+rs8679_A = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs8679_A)
+
+rs114939615_G = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs114939615_G)
+
+rs142376976_C = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs142376976_C)
+
+rs1805407_T = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs1805407_T)
+
+rs2230484_G = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs2230484_G)
+
+rs3219062_G = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs3219062_G)
+
+rs3219134_T = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs3219134_T)
+
+rs3219139_A = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs3219139_A)
+
+rs3219145_T = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs3219145_T)
+
+rs78797064_T = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs78797064_T)
+
+rs149632681_C = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs149632681_C)
+
+rs3219123_G = lm(
+    data = dt_addIDP, formula = (greyM) ~ sex + age + edu + townsend + whr + rs3219123_G)
+
+PARPsnp_greyM<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  
+  snp_name = parp_snp_variants[model]
+  Beta = (tail(model_summary$coefficients[,1],n=1))
+  raw_model = get(parp_snp_variants[model])
+  lower = (tail(confint(raw_model)[,1],n=1))
+  upper = (tail(confint(raw_model)[,2],n=1))
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,Beta,upper,lower,p_value)
+  #print(add_row)
+  PARPsnp_greyM = rbind(PARPsnp_greyM,add_row)
+}
+
+colnames(PARPsnp_greyM) <- c("snp_name","Beta","upper","lower","p_value")
+
+write.csv(PARPsnp_greyM, "data_out/PARPsnp_greyM_wholeUKB_betaValues.csv", row.names = F)
+```
+
+#### greyM & PARP1 SNPs
+
+```{r}
+rs1136410_A = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs1136410_A)
+
+rs1805410_T = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs1805410_T)
+
+rs3219090_T = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs3219090_T)
+
+rs8679_A = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs8679_A)
+
+rs114939615_G = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs114939615_G)
+
+rs142376976_C = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs142376976_C)
+
+rs1805407_T = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs1805407_T)
+
+rs2230484_G = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs2230484_G)
+
+rs3219062_G = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs3219062_G)
+
+rs3219134_T = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs3219134_T)
+
+rs3219139_A = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs3219139_A)
+
+rs3219145_T = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs3219145_T)
+
+rs78797064_T = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs78797064_T)
+
+rs149632681_C = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs149632681_C)
+
+rs3219123_G = lm(
+    data = dt_addIDP, formula = (brainV) ~ sex + age + edu + townsend + whr + rs3219123_G)
+
+PARPsnp_brainV<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  
+  snp_name = parp_snp_variants[model]
+  Beta = (tail(model_summary$coefficients[,1],n=1))
+  raw_model = get(parp_snp_variants[model])
+  lower = (tail(confint(raw_model)[,1],n=1))
+  upper = (tail(confint(raw_model)[,2],n=1))
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,Beta,upper,lower,p_value)
+  #print(add_row)
+  PARPsnp_brainV = rbind(PARPsnp_brainV,add_row)
+}
+
+colnames(PARPsnp_brainV) <- c("snp_name","Beta","upper","lower","p_value")
+
+write.csv(PARPsnp_brainV, "data_out/PARPsnp_brainV_wholeUKB_betaValues.csv", row.names = F)
+```
+
+
+#### greyM & PARP1 SNPs
+
+```{r}
+rs1136410_A = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs1136410_A)
+
+rs1805410_T = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs1805410_T)
+
+rs3219090_T = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs3219090_T)
+
+rs8679_A = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs8679_A)
+
+rs114939615_G = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs114939615_G)
+
+rs142376976_C = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs142376976_C)
+
+rs1805407_T = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs1805407_T)
+
+rs2230484_G = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs2230484_G)
+
+rs3219062_G = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs3219062_G)
+
+rs3219134_T = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs3219134_T)
+
+rs3219139_A = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs3219139_A)
+
+rs3219145_T = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs3219145_T)
+
+rs78797064_T = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs78797064_T)
+
+rs149632681_C = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs149632681_C)
+
+rs3219123_G = lm(
+    data = dt_addIDP, formula = (peri_greyM) ~ sex + age + edu + townsend + whr + rs3219123_G)
+
+PARPsnp_peri_greyM<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  
+  snp_name = parp_snp_variants[model]
+  Beta = (tail(model_summary$coefficients[,1],n=1))
+  raw_model = get(parp_snp_variants[model])
+  lower = (tail(confint(raw_model)[,1],n=1))
+  upper = (tail(confint(raw_model)[,2],n=1))
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,Beta,upper,lower,p_value)
+  #print(add_row)
+  PARPsnp_peri_greyM = rbind(PARPsnp_peri_greyM,add_row)
+}
+
+colnames(PARPsnp_peri_greyM) <- c("snp_name","Beta","upper","lower","p_value")
+
+write.csv(PARPsnp_peri_greyM, "data_out/PARPsnp_peri_greyM_wholeUKB_betaValues.csv", row.names = F)
+```
+
+#### hipp & PARP1 SNPs
+
+```{r}
+rs1136410_A = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs1136410_A)
+
+rs1805410_T = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs1805410_T)
+
+rs3219090_T = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs3219090_T)
+
+rs8679_A = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs8679_A)
+
+rs114939615_G = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs114939615_G)
+
+rs142376976_C = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs142376976_C)
+
+rs1805407_T = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs1805407_T)
+
+rs2230484_G = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs2230484_G)
+
+rs3219062_G = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs3219062_G)
+
+rs3219134_T = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs3219134_T)
+
+rs3219139_A = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs3219139_A)
+
+rs3219145_T = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs3219145_T)
+
+rs78797064_T = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs78797064_T)
+
+rs149632681_C = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs149632681_C)
+
+rs3219123_G = lm(
+    data = dt_addIDP, formula = (loghippG_t) ~ sex + age + edu + townsend + whr + rs3219123_G)
+
+PARPsnp_hippG<-data.frame(
+  snp_name=character(),OR=double(),upper=double(),lower=double(),p_value=double())
+
+for (model in 1:length(parp_snp_variants)){
+  
+  model_summary = summary(get(parp_snp_variants[model]))
+  
+  snp_name = parp_snp_variants[model]
+  Beta = (tail(model_summary$coefficients[,1],n=1))
+  raw_model = get(parp_snp_variants[model])
+  lower = (tail(confint(raw_model)[,1],n=1))
+  upper = (tail(confint(raw_model)[,2],n=1))
+  p_value = tail(model_summary$coefficients[,4],n=1)
+  
+  add_row = c(snp_name,Beta,upper,lower,p_value)
+  #print(add_row)
+  PARPsnp_hippG = rbind(PARPsnp_hippG,add_row)
+}
+
+colnames(PARPsnp_hippG) <- c("snp_name","Beta","upper","lower","p_value")
+
+write.csv(PARPsnp_hippG, "data_out/PARPsnp_hippG_wholeUKB_betaValues.csv", row.names = F)
+```
+
+### IDP and vitamin B
+
+#### Vitamin B & peri_greyM
+```{r}
+namVB_peri_greyM =lm(formula = peri_greyM ~ sex + age + edu + townsend + whr + nam_vb, data = dt_addIDP)
+summary(namVB_peri_greyM)
+```
+
+#### Vitamin B & brainV
+```{r}
+namVB_brainV =lm(formula = brainV ~ sex + age + edu + townsend + whr + nam_vb, data = dt_addIDP)
+summary(namVB_brainV)
+```
+
+#### Vitamin B & greyM
+```{r}
+namVB_greyM =lm(formula = greyM ~ sex + age + edu + townsend + whr + nam_vb, data = dt_addIDP)
+summary(namVB_greyM)
+```
+#### Vitamin B & greyM
+```{r}
+namVB_hippG =lm(formula = loghippG_t ~ sex + age + edu + townsend + whr + nam_vb, data = dt_addIDP)
+summary(namVB_hippG)
+```
