@@ -7,7 +7,7 @@ December 2020
 # General information
 
 This pipeline relates to data included in **Figure 5** and **Figure 6**
-of out manuscript titled **XXXXXXXX**. It also contains additional
+of out manuscript titled **Parp mutations protect from mitochondrial toxicity in Alzheimer’s disease**. It also contains additional
 supplementary materials.
 
 The input files for this analysis pipeline are on the master branch of
